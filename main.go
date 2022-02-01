@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -66,7 +67,7 @@ func signupPage(res http.ResponseWriter, req *http.Request) {
 		http.Error(res, "Server error, unable to create your account.", 500)
 		return
 	default:
-		http.Redirect(res, req, "/", 301)
+		http.Redirect(res, req, "index.html", 301)
 	}
 }
 
@@ -105,29 +106,28 @@ func loginPage(res http.ResponseWriter, req *http.Request) {
 	}
 
 	if role == "Admin" {
-		http.ServeFile(res, req, "Admin.html")
+		http.ServeFile(res, req, "addUser.html")
 		return
 	} else {
 		http.ServeFile(res, req, "Member.html")
 	}
 }
 
-func homePage(res http.ResponseWriter, req *http.Request) {
-	http.ServeFile(res, req, "index.html")
-}
-
 func AddUser(res http.ResponseWriter, req *http.Request) {
 	if req.Method != "POST" {
-		http.ServeFile(res, req, "Admin.html")
+		http.ServeFile(res, req, "addUser.html")
 		return
 	}
 	UserName := req.FormValue("username")
+	fmt.Println("Updating role")
 
 	var UserId int
-	query := "Select UserId from UserDB.users where UserName=" + UserName + ";"
-	err := DB.QueryRow(query).Scan(&UserId)
+	err := DB.QueryRow("SELECT UserId from users where UserName=?", UserName).Scan(&UserId)
 	if err != nil {
-		res.Write([]byte("User not found"))
+		if err != sql.ErrNoRows {
+			panic(err.Error())
+		}
+		res.Write([]byte(UserName + " not found in our database"))
 		return
 	}
 	role := "Admin"
@@ -136,7 +136,79 @@ func AddUser(res http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		panic(err.Error())
 	}
-	res.Write([]byte(UserName + "User is now admin"))
+	res.Write([]byte(UserName + " is now admin"))
+}
+
+func DeleteCity(res http.ResponseWriter, req *http.Request) {
+	if req.Method != "POST" {
+		http.ServeFile(res, req, "deleteCity.html")
+		return
+	}
+
+	deleteCity := req.FormValue("city")
+	fmt.Println("deleting city " + deleteCity)
+
+	//check if city is present or not
+	var cityP string
+
+	err := DB.QueryRow("SELECT city FROM cities where city=?", deleteCity).Scan(&cityP)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			panic(err.Error())
+		}
+		res.Write([]byte(deleteCity + " City not present"))
+		return
+	}
+
+	_, err = DB.Exec("DELETE FROM cities where city=?", deleteCity)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	fmt.Println("Deleted city " + deleteCity)
+	res.Write([]byte(deleteCity + " City deleted successfully"))
+}
+
+func AddCity(res http.ResponseWriter, req *http.Request) {
+	if req.Method != "POST" {
+		http.ServeFile(res, req, "addCity.html")
+		return
+	}
+
+	cityAdd := req.FormValue("city")
+	cityAdd = strings.ToUpper(cityAdd)
+	stateAdd := req.FormValue("state")
+	stateAdd = strings.ToUpper(stateAdd)
+
+	//storing values if city and state already present
+	var cityP string
+	var stateP string
+
+	//checking if city is already present
+	err := DB.QueryRow("SELECT city, state from cities where city=?", cityAdd).Scan(&cityP, &stateP)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			//if not present then insert it
+			fmt.Println("Adding City")
+			_, err = DB.Exec("Insert into cities(city, state) Values(?, ?)", cityAdd, stateAdd)
+			if err != nil {
+				fmt.Println("City not added ")
+				res.Write([]byte("Unable to add City " + cityAdd))
+			}
+			res.Write([]byte(cityAdd + " city successfully added"))
+			return
+		} else {
+			panic(err.Error())
+		}
+	}
+
+	//city already present
+	fmt.Println("City already present in database")
+	res.Write([]byte(cityAdd + " city already present"))
+}
+
+func homePage(res http.ResponseWriter, req *http.Request) {
+	http.ServeFile(res, req, "index.html")
 }
 
 func main() {
@@ -168,6 +240,11 @@ func main() {
 			}
 	*/
 
+	_, err = DB.Exec("Create Table if not exists users(UserId int primary key AUTO_INCREMENT, UserName varchar(50), UserEmail varchar(50), UserPassword varchar(50))")
+	if err != nil {
+		panic(err.Error())
+	}
+
 	/*
 		roles table
 			type roles struct {
@@ -176,14 +253,25 @@ func main() {
 			}
 	*/
 
-	_, err = DB.Exec("Create Table if not exists users(UserId int primary key AUTO_INCREMENT, UserName varchar(50), UserEmail varchar(50), UserPassword varchar(50))")
-	if err != nil {
-		panic(err.Error())
-	}
 	_, err = DB.Exec("Create Table if not exists roles(UserId int primary key, Roles varchar(20))")
 	if err != nil {
 		panic(err.Error())
 	}
+
+	/*
+
+		city table
+		type cities struct {
+			city string
+			state string
+		}
+	*/
+
+	_, err = DB.Exec("Create Table if not exists cities(city varchar(30) primary key, state varchar(30))")
+	if err != nil {
+		panic(err.Error())
+	}
+
 	UserName := "Admin"
 	var UserId int
 
@@ -193,9 +281,12 @@ func main() {
 		panic(err.Error())
 	}
 
+	fmt.Println("Running Port on: 8080")
 	http.HandleFunc("/", homePage)
 	http.HandleFunc("/login", loginPage)
 	http.HandleFunc("/signup", signupPage)
 	http.HandleFunc("/addUser", AddUser)
+	http.HandleFunc("/addCity", AddCity)
+	http.HandleFunc("/deleteCity", DeleteCity)
 	http.ListenAndServe(":8080", nil)
 }
